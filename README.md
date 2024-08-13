@@ -13,7 +13,7 @@ FFXIV向けのACTプラグインです。
 1. resources フォルダをACT本体があるディレクトリかRearFlankChecker.dllと同じディレクトリに配置
 1. RearFlankChecker.dll を ACT からプラグイン追加
 #### 動作環境
-* .NET Framework 4.7.1 以降
+* .NET Framework 4.8 以降
 ## 使用方法
 ![Config](https://github.com/furutto/RearFlankChecker/blob/master/resources/image/readme_config.jpg)
 1. [Plugins]タブの[Rear And Flank Checker]タブに設定項目があります。
