@@ -1,129 +1,162 @@
 ﻿using System;
 using Advanced_Combat_Tracker;
+using System.IO;
+using System.Collections.Generic;
+using System.Linq;
+using Newtonsoft.Json.Linq;
 
 namespace RearFlankChecker.Util
 {
     class CombatActionChecker
     {
+        Dictionary<string, Skill> skillMap;
+        private const int BONUS_COMBO = 0;
+        private const int BONUS_POSITIONAL = 1;
+        private const int NO_BONUS_PERCENT = 0;
+        private const int SKILL_ID_AUTO_ATTACK = 7;
 
-        public static bool IsMySkill(CombatActionEventArgs actionInfo)
+        public CombatActionChecker()
         {
-            // 自分のスキルかどうか
-            if (!actionInfo.combatAction.Attacker.Equals(ActGlobals.charName))
-            {
-                return false;
-            }
-            // 2がスキルっぽい（1がオートアタック、Dotも2以外）
-            if (actionInfo.swingType != 2)
-            {
-                return false;
-            }
-
-            return true;
+            String path = ResourceLocator.findResourcePath("resources/potencies.json");
+            string data = File.ReadAllText(path);
+            skillMap = ParseJsonToSkillMap(data);
         }
 
-        public static bool JudgeFlankOrRearSkill(CombatActionEventArgs actionInfo)
+        public bool JudgeFlankOrRearSkill(UInt32 skillID, UInt32 potencyPercent, string skillName)
         {
-            Boolean isJudge = true;
+            Skill s;
 
-            // スキルID取得
-            Object oSkillId = null;
-            actionInfo.tags.TryGetValue("SkillID", out oSkillId);
-            int numId = Convert.ToInt32(oSkillId);
-
-            // ダメージ補正（コンボや方向指定の成功により加算されているようである）
-            Object oDmgAdjust = null;
-            actionInfo.tags.TryGetValue("DmgAdjust", out oDmgAdjust);
-            String sDmgAdjust = oDmgAdjust == null ? "" : oDmgAdjust.ToString();
-
-            switch (numId)
+            if (skillID == SKILL_ID_AUTO_ATTACK)
             {
-                // 忍者
-                case 2255:  // 旋風刃
-                    // isJudge = sDmgAdjust.Equals("0.7");  // patch 4.5
-                    // isJudge = sDmgAdjust.Equals("0.76"); // patch 5.0
-                    // isJudge = sDmgAdjust.Equals("0.78"); // patch 5.08
-                    isJudge = sDmgAdjust.Equals("0.79");    // patch 5.1
-                    break;
-                case 3563:  // 強甲破点突
-                    // isJudge = sDmgAdjust.Equals("0.66"); // patch 4.5
-                    // isJudge = sDmgAdjust.Equals("0.74"); // patch 5.0
-                    // isJudge = sDmgAdjust.Equals("0.77"); // patch 5.08
-                    isJudge = sDmgAdjust.Equals("0.78");    // patch 5.1
-                    break;
-                case 2258:  // だまし
-                    isJudge = !sDmgAdjust.Equals("");
-                    break;
-                //  竜騎士
-                case 88:  // 桜華
-                    //isJudge = sDmgAdjust.Equals("0.64");
-                    // コンボ失敗して背面攻撃したら 0.28（コンボ成功時のみ考慮で良いとは思うが一応追加した）
-                    // isJudge = sDmgAdjust.Equals("0.64") || sDmgAdjust.Equals("0.28"); // patch 4.5
-                    isJudge = sDmgAdjust.Equals("0.69") || sDmgAdjust.Equals("0.28");    // patch 5.0
-                    break;
-                case 79:  // ヘヴィスラスト
-                case 3554:  // 竜牙竜爪（側面）
-                case 3556:  // 竜尾大車輪（背面）
-                    isJudge = !sDmgAdjust.Equals("");
-                    break;
-                // モンク
-                case 53:  // 連撃
-                    // 連撃はlogから判定する
-                    break;
-                case 74:  // 双竜脚
-                case 61:  // 双掌打
-                case 56:  // 崩拳
-                case 54:  // 正拳突き
-                case 66:  // 破砕拳
-                    isJudge = !sDmgAdjust.Equals("");
-                    break;
-                default:
-                    isJudge = true;
-                    break;
+                return true;
             }
 
-            return isJudge;
-        }
-
-
-        public static bool JudgeFlankOrRearSkillForLog(String[] logDatas, String actorId)
-        {
-            Boolean isJudge = true;
-
-            switch (logDatas[5].ToUpper())
+            if (!skillMap.TryGetValue(skillID.ToString(), out s))
             {
-                // 侍
-                case "1D39": // 月光
-                case "1D3A": // 花車 　　成功 A3C 失敗 53C っぽい
-                    isJudge = IsContainStr("A3C", logDatas);
-                    break;
-                // モンク  
-                case "35":  // 連撃
-                    isJudge = IsContainStr("1C", logDatas);
-                    break;
+                return true;
             }
 
-            return isJudge;
+            var result = !s.MissedPositionalBonusPercents.Contains((int)potencyPercent);
+            ActGlobals.oFormActMain.WriteInfoLog($"RFC: Check: {skillID} {skillName} {result} {potencyPercent} {string.Join(",", s.MissedPositionalBonusPercents)}");
+
+            return result;
         }
 
-
-        private static bool IsContainStr(String targetStr, String[] logDatas)
+        static Dictionary<string, Skill> ParseJsonToSkillMap(string jsonString)
         {
-            for (int i = 11; i < 25 && i < logDatas.Length; i++)
+            Dictionary<string, Skill> skillMap = new Dictionary<string, Skill>();
+            try
             {
-                if (logDatas[i].Equals(targetStr))
+                JObject root = JObject.Parse(jsonString);
+                foreach (var prop in root)
                 {
-                    return true;
+                    string key = prop.Key;
+                    if (prop.Value.Type == JTokenType.Object)
+                    {
+                        skillMap.Add(key, ParseSkill((JObject)prop.Value));
+                    }
+                    else
+                    {
+                        ActGlobals.oFormActMain.WriteInfoLog("RFC: Cannot read potencies.json: Invalid value at " + key);
+                    }
+                }
+                return skillMap;
+            }
+            catch (Exception ex)
+            {
+                ActGlobals.oFormActMain.WriteInfoLog($"RFC: Error parsing JSON to Skill map: {ex.Message}");
+                return new Dictionary<string, Skill>();
+            }
+        }
+
+        static Skill ParseSkill(JObject elem)
+        {
+            Skill skill = new Skill();
+            skill.Name = (string)elem["name"];
+            JArray potenciesArray = (JArray)elem["potencies"];
+            foreach (JObject p in potenciesArray)
+            {
+                Potency potency = new Potency();
+                potency.Value = (int)p["value"];
+                JArray bonusModifiersArray = (JArray)p["bonusModifiers"];
+                if (bonusModifiersArray != null)
+                {
+                    foreach (var m in bonusModifiersArray)
+                    {
+                        potency.BonusModifiers.Add((int)m);
+                    }
+                }
+                skill.Potencies.Add(potency);
+            }
+            skill.MissedPositionalBonusPercents = CalculateMissedPositionalBonusPercents(skill.Potencies);
+            return skill;
+        }
+
+        static List<int> CalculateMissedPositionalBonusPercents(List<Potency> potencies)
+        {
+            // Ref: https://github.com/xivanalysis/xivanalysis/blob/dawntrail/src/parser/core/modules/Positionals.tsx#L92
+        var missedPositionalBonusPercents = new List<int> { NO_BONUS_PERCENT };
+            if (potencies.Count() == 0)
+            {
+                return missedPositionalBonusPercents;
+            }
+
+            var possibleBasePotencies = potencies.Where(potency =>
+                potency.BonusModifiers.Count == 0 ||
+                (potency.BonusModifiers.Count == 1 && potency.BonusModifiers[0] == BONUS_COMBO)
+            ).ToList();
+
+            foreach (var basePotency in possibleBasePotencies)
+            {
+                var possibleBonusPotencies = potencies.Where(potency =>
+                    !potency.BonusModifiers.Contains(BONUS_POSITIONAL) &&
+                    potency.Value > basePotency.Value
+                ).ToList();
+
+                foreach (var bonusPotency in possibleBonusPotencies)
+                {
+                    missedPositionalBonusPercents.Add(CalculateBonusPercent(
+                        basePotency.Value,
+                        bonusPotency.Value
+                    ));
                 }
             }
-            return false;
+
+            return missedPositionalBonusPercents.Distinct().ToList();
+
         }
 
-        public static String GetActorId(CombatActionEventArgs actionInfo)
+        static int CalculateBonusPercent(int baseValue, int bonus)
         {
-            Object actorId = null;
-            actionInfo.tags.TryGetValue("ActorID", out actorId);
-            return actorId == null ? "" : actorId.ToString();
+            return (int)(100 * (1.0 - (double)baseValue / (double)bonus));
         }
     }
+
+    class Skill
+    {
+        public string Name { get; set; }
+        public List<Potency> Potencies { get; set; }
+        public string Id {  get; set; }
+        public List<int> MissedPositionalBonusPercents { get; set; }
+
+        public Skill()
+        {
+            Potencies = new List<Potency>();
+            MissedPositionalBonusPercents = new List<int>();
+        }
+    }
+
+    class Potency
+    {
+        public int Value { get; set; }
+        public List<int> BonusModifiers { get; set; }
+        // Not supported because the values are int or string.
+        // public List<int> baseModifiers { get; set; }
+
+        public Potency()
+        {
+            BonusModifiers = new List<int>();
+        }
+    }
+
 }

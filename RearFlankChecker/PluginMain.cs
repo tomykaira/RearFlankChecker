@@ -4,6 +4,7 @@ using System.Windows.Forms;
 using RearFlankChecker.Util;
 using System.Media;
 using System.Reflection;
+using System.Linq;
 
 namespace RearFlankChecker
 {
@@ -13,7 +14,10 @@ namespace RearFlankChecker
         public ACTTabControl ACTTabControl { get; private set; }
         public AttackMissView AttackMissView { get; private set; }
         private SoundPlayer soundPlayer;
-        private String actorId;
+        private String actionEffecNetworkAbility = "ActionEffect 15:";
+        private dynamic dataRepository;
+        private CombatActionChecker checker;
+        private const int TIMESTAMP_OFFSET = 15;
 
         public void InitPlugin(TabPage pluginScreenSpace, Label pluginStatusText)
         {
@@ -31,17 +35,36 @@ namespace RearFlankChecker
             String path = ResourceLocator.findResourcePath("resources/wav/miss.wav");
             if(path != null)
                 soundPlayer = new SoundPlayer(path);
-            
 
+            var xivPlugin = GetPluginData("FFXIV_ACT_Plugin.dll");
 
-            ActGlobals.oFormActMain.AfterCombatAction += AfterCombatAction;
+            if (xivPlugin != null)
+            {
+                dataRepository = xivPlugin.pluginObj.GetType().GetProperty("DataRepository").GetValue(xivPlugin.pluginObj, null);
+            }
+            if (dataRepository == null)
+            {
+                ActGlobals.oFormActMain.WriteDebugLog($"RFC: Cannot get DataRepository from ACT Plugin {xivPlugin} {dataRepository}");
+            }
+
             ActGlobals.oFormActMain.OnCombatStart += CombatStarted;
             ActGlobals.oFormActMain.OnLogLineRead += OnLogLineRead;
+            checker = new CombatActionChecker();
+        }
+        private Advanced_Combat_Tracker.ActPluginData GetPluginData(string pluginName)
+        {
+            foreach (var plugin in Advanced_Combat_Tracker.ActGlobals.oFormActMain.ActPlugins)
+            {
+                if (!plugin.cbEnabled.Checked)
+                    continue;
+                if (plugin.pluginFile.Name == pluginName)
+                    return plugin;
+            }
+            return null;
         }
 
         public void DeInitPlugin()
         {
-            ActGlobals.oFormActMain.AfterCombatAction -= AfterCombatAction;
             ActGlobals.oFormActMain.OnCombatStart -= CombatStarted;
             ActGlobals.oFormActMain.OnLogLineRead -= OnLogLineRead;
 
@@ -59,62 +82,51 @@ namespace RearFlankChecker
 
         private void CombatStarted(bool isImport, CombatToggleEventArgs encounterInfo)
         {
-            actorId = null;
             AttackMissView.Reset();
-        }
-
-        private void AfterCombatAction(bool isImport, CombatActionEventArgs actionInfo)
-        {
-            if (CombatActionChecker.IsMySkill(actionInfo))
-            {
-                if (actorId == null)
-                {
-                    actorId = CombatActionChecker.GetActorId(actionInfo);
-                }
-
-                if (!CombatActionChecker.JudgeFlankOrRearSkill(actionInfo))
-                {
-                    AttackMissView.CountUp(actionInfo.theAttackType);
-
-                    if (soundPlayer != null && ACTTabControl.IsSoundEnable())
-                    {
-                        soundPlayer.Play();
-                    }
-                }
-            }
         }
 
         private void OnLogLineRead(bool isImport, LogLineEventArgs logInfo)
         {
             String logLine = logInfo.logLine;
 
-            // "[07:23:04.000] 15:FFFFFF"
-            if (logLine.Length < 18)
+            uint playerID = 0;
+
+            if (dataRepository != null) {
+                playerID = dataRepository.GetType().GetMethod("GetCurrentPlayerID").Invoke(dataRepository, null);
+            }
+            if (playerID == 0)
+            {
+                ActGlobals.oFormActMain.WriteDebugLog("RFC: Cannot get the current player ID");
+                return;
+            }
+            string playerHex = playerID.ToString("X");
+
+            // 0x15: NetworkAbility
+            // Reference: https://github.com/OverlayPlugin/cactbot/blob/main/docs/LogGuide.md#line-21-0x15-networkability
+            if (logLine.Length < TIMESTAMP_OFFSET + actionEffecNetworkAbility.Length || !logLine.Substring(TIMESTAMP_OFFSET, actionEffecNetworkAbility.Length).Equals(actionEffecNetworkAbility))
+                return;
+
+
+            string[] lineDatas = logLine.Substring(TIMESTAMP_OFFSET).Split(':');
+
+
+            if (lineDatas.Length < 8)
             {
                 return;
             }
 
-            // 15: から始まるなら 戦闘スキル発動っぽい
-            if (!logLine.Substring(15, 3).Equals("15:"))
-                return;
-
-
-            string[] lineDatas = logLine.Split(':');
-
-
-            if (lineDatas.Length < 16)
+            if (!lineDatas[1].Equals(playerHex))
             {
                 return;
             }
+            UInt32 skillID = UInt32.Parse(lineDatas[3], System.Globalization.NumberStyles.HexNumber);
+            UInt32 effect1 = UInt32.Parse(lineDatas[7], System.Globalization.NumberStyles.HexNumber);
+            string skillName = lineDatas[4];
+            UInt32 bonusPercent = effect1 >> 24;
 
-            if (!lineDatas[3].Equals(actorId))
+            if (!checker.JudgeFlankOrRearSkill(skillID, bonusPercent, skillName))
             {
-                return;
-            }
-
-            if (!CombatActionChecker.JudgeFlankOrRearSkillForLog(lineDatas, actorId))
-            {
-                AttackMissView.CountUp(lineDatas[6]);
+                AttackMissView.CountUp(lineDatas[4]);
 
                 if (soundPlayer != null && ACTTabControl.IsSoundEnable())
                 {
@@ -122,9 +134,6 @@ namespace RearFlankChecker
                 }
             }
         }
-
-
-
     }
 
 }
