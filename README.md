@@ -25,3 +25,26 @@ FFXIV向けのACTプラグインです。
 [三条項BSDライセンス](LICENSE)  
 ## 連絡先
 twitter:  [@furutto_dev](https://twitter.com/furutto_dev)  
+
+## resources/potencies.json の更新方法
+
+[xivanalysis](https://github.com/xivanalysis/xivanalysis)のコードをダウンロードします。
+ルートディレクトリに `export.ts` を作成し、 `npx ts-node export.ts` で実行します。
+
+```
+import { ACTIONS } from './src/data/ACTIONS';
+import { Potency } from './src/data/ACTIONS/type';
+import fs from "fs";
+
+const out: { [key: string]: { name: string, potencies: Potency[] } } = {};
+for (const k of Object.keys(ACTIONS) as Array<keyof typeof ACTIONS>) {
+    const v = ACTIONS[k];
+    if (v.potencies) {
+        out[v.id] = { name: v.name, potencies: v.potencies };
+    }
+}
+
+const jsonString = JSON.stringify(out, null, 2);
+
+fs.writeFileSync("potencies.json", jsonString, 'utf8');
+```

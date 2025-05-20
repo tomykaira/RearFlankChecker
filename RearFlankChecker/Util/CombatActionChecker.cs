@@ -95,11 +95,12 @@ namespace RearFlankChecker.Util
         static List<int> CalculateMissedPositionalBonusPercents(List<Potency> potencies)
         {
             // Ref: https://github.com/xivanalysis/xivanalysis/blob/dawntrail/src/parser/core/modules/Positionals.tsx#L92
-        var missedPositionalBonusPercents = new List<int> { NO_BONUS_PERCENT };
-            if (potencies.Count() == 0)
+            if (potencies.Count() == 0 || !potencies.Exists(p => p.BonusModifiers.Contains(BONUS_POSITIONAL)))
             {
-                return missedPositionalBonusPercents;
+                return new List<int> { };
             }
+
+            var missedPositionalBonusPercents = new List<int> { NO_BONUS_PERCENT };
 
             var possibleBasePotencies = potencies.Where(potency =>
                 potency.BonusModifiers.Count == 0 ||
